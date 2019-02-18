@@ -2,6 +2,10 @@ use sled;
 use std::env;
 use std::path;
 use std::io;
+use std::io::Read;
+use std::io::BufRead;
+use std::io::BufReader;
+use std::mem::size_of;
 
 static USAGE: &str = r#"sled-exec - wrap a command and store the standard streams in a sled database
 
@@ -65,8 +69,58 @@ fn main() -> Result<(), std::io::Error> {
     let mut tree = sled::Db::start(config.build()).expect("could not open database");
 
     let mut child = cmd.spawn()?;
-    let child_stderr = child.stderr.expect("child missing stderr");
-    let child_stdout = child.stdout.expect("child missing stdout");
+    let mut child_stderr = BufReader::new(child.stderr.expect("child missing stderr"));
+    let mut child_stdout = BufReader::new(child.stdout.expect("child missing stdout"));
+
+    // collect our output into these buffers
+    let mut line_stdout = Vec::new();
+    let mut line_stderr = Vec::new();
+
+    // Keep track of EOF on both streams
+    let (mut eof_stdout, mut eof_stderr) = (false, false);
+
+    // I guess this works for \r\n too.
+    const NEWLINE: u8 = 0xA;
+
+    loop {
+        if !eof_stdout {
+            match child_stdout.read_until(NEWLINE, &mut line_stdout) {
+                Ok(n) if n == 0 => {
+                    eof_stdout = true;
+                }
+                Ok(n) => {
+                    let next_id = tree.generate_id().unwrap();
+                    tree.set(format!("stdout:{:08}", next_id), line_stdout.clone()).unwrap().unwrap();
+                }
+                Err(e) => {
+                    // There COULD be bytes in our buffer
+                    eof_stdout = true;
+                }
+            };
+            line_stdout.clear();
+        }
+
+        if !eof_stderr {
+            match child_stderr.read_until(NEWLINE, &mut line_stderr) {
+                Ok(n) if n == 0 => {
+                    eof_stderr = true;
+                }
+                Ok(n) => {
+                    let next_id = tree.generate_id().unwrap();
+                    tree.set(format!("stderr:{:08}", next_id), line_stderr.clone()).unwrap().unwrap();
+                }
+                Err(e) => {
+                    // There COULD be bytes in our buffer
+                    eof_stderr = true;
+                }
+            };
+            line_stderr.clear();
+        }
+
+        if eof_stderr && eof_stdout {
+            break;
+        }
+    }
 
     Ok(())
 }
