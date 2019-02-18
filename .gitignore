@@ -1,0 +1,6 @@
+/target
+**/*.rs.bk
+.idea
+
+# ignore test sled database extensions
+*.db

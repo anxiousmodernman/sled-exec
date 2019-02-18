@@ -1,0 +1,10 @@
+[package]
+name = "sled-exec"
+version = "0.1.0"
+authors = ["Coleman McFarland <cmcfarland@paperlesspost.com>"]
+edition = "2018"
+
+[dependencies]
+sled = "*"
+clap = "*"
+
