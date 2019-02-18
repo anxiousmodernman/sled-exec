@@ -1,6 +1,7 @@
 use sled;
 use std::env;
 use std::path;
+use std::io;
 
 static USAGE: &str = r#"sled-exec - wrap a command and store the standard streams in a sled database
 
@@ -12,9 +13,9 @@ Options:
     --compress      Enable sled's log compression
 "#;
 
-fn main() {
+fn main() -> Result<(), std::io::Error> {
 
-    let mut args = env::args().skip(1); // skip "sled-exec"
+    let mut args = env::args().skip(1); // skip "sled-exec", the first arg
     let mut config = sled::ConfigBuilder::new().path("sled-exec.db");
     let mut subcommand_args: Vec<String> = Vec::new();
     let mut more_conf_args = true;
@@ -61,8 +62,13 @@ fn main() {
         cmd.arg(arg);
     }
 
-    let tree = sled::Db::start(config.build()).expect("could not open database");
+    let mut tree = sled::Db::start(config.build()).expect("could not open database");
 
+    let mut child = cmd.spawn()?;
+    let child_stderr = child.stderr.expect("child missing stderr");
+    let child_stdout = child.stdout.expect("child missing stdout");
+
+    Ok(())
 }
 
 fn exit_with_message(code: i32, msg: &str) {
