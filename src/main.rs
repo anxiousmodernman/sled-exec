@@ -2,8 +2,7 @@ use sled;
 use std::env;
 use std::path;
 
-static USAGE: &str = r#"
-sled-exec - wrap a command and store the standard streams in a sled database
+static USAGE: &str = r#"sled-exec - wrap a command and store the standard streams in a sled database
 
 Usage:
     sled-exec [[OPTIONS] --] COMMAND [ARGS]
@@ -39,9 +38,12 @@ fn main() {
                     config = config.use_compression(true);
                     continue;
                 }
+                "-h" | "--help" => {
+                    exit_with_message(1, USAGE);
+                }
                 _ => {
                     if arg.starts_with("-") {
-                        exit_with_message(-1, &format!("invalid argument: {}", arg));
+                        exit_with_message(1, &format!("invalid argument: {}", arg));
                     }
                 }
             }
@@ -50,8 +52,16 @@ fn main() {
         }
         subcommand_args.push(arg);
     }
-    let conf = config.build();
-    println!("subcommand args: {:?}", subcommand_args);
+    if subcommand_args.len() < 1 {
+        exit_with_message(1, USAGE);
+    }
+    let mut iter = subcommand_args.iter();
+    let mut cmd = std::process::Command::new(iter.next().unwrap());
+    while let Some(arg) = iter.next() {
+        cmd.arg(arg);
+    }
+
+    let tree = sled::Db::start(config.build()).expect("could not open database");
 
 }
 
