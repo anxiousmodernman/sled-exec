@@ -2,13 +2,9 @@ use sled;
 use std::env;
 use std::path;
 use std::io;
-use std::io::Read;
-use std::io::BufRead;
-use std::io::BufReader;
+use std::io::{BufReader, BufRead, Read, Write};
 use std::process;
-use std::mem::size_of;
-use std::process::ChildStdout;
-use std::process::ChildStderr;
+use std::process::{ChildStdout, ChildStderr, Stdio};
 
 static USAGE: &str = r#"sled-exec - wrap a command and store the standard streams in a sled database
 
@@ -68,6 +64,7 @@ fn main() -> Result<(), std::io::Error> {
     }
     let mut iter = subcommand_args.iter();
     let mut cmd = process::Command::new(iter.next().unwrap());
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     while let Some(arg) = iter.next() {
         cmd.arg(arg);
     }
@@ -75,41 +72,33 @@ fn main() -> Result<(), std::io::Error> {
     let mut tree = sled::Db::start(config.build()).expect("could not open database");
 
     let mut child = cmd.spawn()?;
-    // TODO we might not have either of these streams, so don't panic
-//    let mut child_stderr = BufReader::new(child.stderr.expect("child missing stderr"));
-//    let mut child_stdout = BufReader::new(child.stdout.expect("child missing stdout"));
-    let mut child_stdout = child.stdout.map_or(None, |stream| Some(BufReader::new(stream)));
-    let mut child_stderr = child.stderr.map_or(None, |stream| Some(BufReader::new(stream)));
-
-
+    // TODO is it okay to panic here?
+    let mut child_stderr = BufReader::new(child.stderr.as_mut().expect("child missing stderr"));
+    let mut child_stdout = BufReader::new(child.stdout.as_mut().expect("child missing stdout"));
 
     // collect our output into these buffers
     let mut line_stdout: Vec<u8> = Vec::new();
     let mut line_stderr: Vec<u8> = Vec::new();
 
+    // write to stdout and stderr
+    let mut main_stdout = io::stdout();
+    let mut main_stderr = io::stderr();
+
     // Keep track of EOF on both streams
     let (mut eof_stdout, mut eof_stderr) = (false, false);
 
-    if let None = child_stdout {
-       eof_stdout = true
-    }
-
-
     loop {
 
-//                if !eof_stdout {
-//                    eof_stdout = maybe_write_line(&mut stream, &mut tree, &mut line_stdout);
-//                }
-
-
             if !eof_stdout {
-                match child_stdout.unwrap().read_until(NEWLINE, &mut line_stdout) {
+                match child_stdout.read_until(NEWLINE, &mut line_stdout) {
                     Ok(n) if n == 0 => {
                         eof_stdout = true;
                     }
                     Ok(n) => {
                         let next_id = tree.generate_id().unwrap();
-                        tree.set(format!("stdout:{:08}", next_id), line_stdout.clone()).unwrap().unwrap();
+                        tree.set(format!("stdout:{:08}", next_id), line_stdout.clone()).unwrap(); //.unwrap();
+                        main_stdout.write(&line_stdout.clone()).expect("could not write to stdout");
+
                     }
                     Err(e) => {
                         // There COULD be bytes in our buffer
@@ -119,23 +108,23 @@ fn main() -> Result<(), std::io::Error> {
                 line_stdout.clear();
             }
 
-
-//        if !eof_stderr {
-//            match child_stderr.read_until(NEWLINE, &mut line_stderr) {
-//                Ok(n) if n == 0 => {
-//                    eof_stderr = true;
-//                }
-//                Ok(n) => {
-//                    let next_id = tree.generate_id().unwrap();
-//                    tree.set(format!("stderr:{:08}", next_id), line_stderr.clone()).unwrap().unwrap();
-//                }
-//                Err(e) => {
-//                    // There COULD be bytes in our buffer
-//                    eof_stderr = true;
-//                }
-//            };
-//            line_stderr.clear();
-//        }
+        if !eof_stderr {
+            match child_stderr.read_until(NEWLINE, &mut line_stderr) {
+                Ok(n) if n == 0 => {
+                    eof_stderr = true;
+                }
+                Ok(n) => {
+                    let next_id = tree.generate_id().unwrap();
+                    tree.set(format!("stderr:{:08}", next_id), line_stderr.clone()).unwrap(); //.unwrap();
+                    main_stderr.write(&line_stderr.clone()).expect("could not write to stderr");
+                }
+                Err(e) => {
+                    // There COULD be bytes in our buffer
+                    eof_stderr = true;
+                }
+            };
+            line_stderr.clear();
+        }
 
         if eof_stderr && eof_stdout {
             break;
@@ -143,26 +132,6 @@ fn main() -> Result<(), std::io::Error> {
     }
 
     Ok(())
-}
-
-fn maybe_write_line<T: Read>(stream: &mut BufReader<T>, db: &mut sled::Db, mut line_buf: &mut Vec<u8>) -> bool {
-    let mut eof = false;
-        match stream.read_until(NEWLINE, &mut line_buf) {
-                Ok(n) if n == 0 => {
-                    eof = true;
-                }
-                Ok(n) => {
-                    let next_id = db.generate_id().unwrap();
-                    // TODO: prefix with stdout/stderr
-                    db.set(format!("{}", next_id), line_buf.clone()).unwrap().unwrap();
-                }
-                Err(e) => {
-                    // There COULD be bytes in our buffer
-                    eof = true;
-                }
-            };
-            line_buf.clear();
-    eof
 }
 
 fn exit_with_message(code: i32, msg: &str) {
