@@ -1,10 +1,11 @@
+#![allow(unused_mut)]
 use sled;
 use std::env;
-use std::path;
 use std::io;
-use std::io::{BufReader, BufRead, Read, Write};
+use std::io::{BufRead, BufReader, Write};
+use std::path;
 use std::process;
-use std::process::{ChildStdout, ChildStderr, Stdio};
+use std::process::Stdio;
 
 static USAGE: &str = r#"sled-exec - wrap a command and store the standard streams in a sled database
 
@@ -20,7 +21,6 @@ Options:
 const NEWLINE: u8 = 0xA;
 
 fn main() -> Result<(), std::io::Error> {
-
     let mut args = env::args().skip(1); // skip "sled-exec", the first arg
     let mut config = sled::ConfigBuilder::new().path("sled-exec.db");
     let mut subcommand_args: Vec<String> = Vec::new();
@@ -31,7 +31,7 @@ fn main() -> Result<(), std::io::Error> {
                 "--" => {
                     more_conf_args = false;
                     continue;
-                },
+                }
                 "--db" => {
                     if let Some(path) = args.next() {
                         let path = path::Path::new(&path);
@@ -40,7 +40,7 @@ fn main() -> Result<(), std::io::Error> {
                     } else {
                         exit_with_message(1, USAGE);
                     }
-                },
+                }
                 "--compress" => {
                     config = config.use_compression(true);
                     continue;
@@ -88,37 +88,41 @@ fn main() -> Result<(), std::io::Error> {
     let (mut eof_stdout, mut eof_stderr) = (false, false);
 
     loop {
-
-            if !eof_stdout {
-                match child_stdout.read_until(NEWLINE, &mut line_stdout) {
-                    Ok(n) if n == 0 => {
-                        eof_stdout = true;
-                    }
-                    Ok(n) => {
-                        let next_id = tree.generate_id().unwrap();
-                        tree.set(format!("stdout:{:08}", next_id), line_stdout.clone()).unwrap(); //.unwrap();
-                        main_stdout.write(&line_stdout.clone()).expect("could not write to stdout");
-
-                    }
-                    Err(e) => {
-                        // There COULD be bytes in our buffer
-                        eof_stdout = true;
-                    }
-                };
-                line_stdout.clear();
-            }
+        if !eof_stdout {
+            match child_stdout.read_until(NEWLINE, &mut line_stdout) {
+                Ok(n) if n == 0 => {
+                    eof_stdout = true;
+                }
+                Ok(_n) => {
+                    let next_id = tree.generate_id().unwrap();
+                    tree.set(format!("stdout:{:010}", next_id), line_stdout.clone())
+                        .unwrap(); //.unwrap();
+                    main_stdout
+                        .write(&line_stdout.clone())
+                        .expect("could not write to stdout");
+                }
+                Err(_e) => {
+                    // There COULD be bytes in our buffer
+                    eof_stdout = true;
+                }
+            };
+            line_stdout.clear();
+        }
 
         if !eof_stderr {
             match child_stderr.read_until(NEWLINE, &mut line_stderr) {
                 Ok(n) if n == 0 => {
                     eof_stderr = true;
                 }
-                Ok(n) => {
+                Ok(_n) => {
                     let next_id = tree.generate_id().unwrap();
-                    tree.set(format!("stderr:{:08}", next_id), line_stderr.clone()).unwrap(); //.unwrap();
-                    main_stderr.write(&line_stderr.clone()).expect("could not write to stderr");
+                    tree.set(format!("stderr:{:010}", next_id), line_stderr.clone())
+                        .unwrap(); //.unwrap();
+                    main_stderr
+                        .write(&line_stderr.clone())
+                        .expect("could not write to stderr");
                 }
-                Err(e) => {
+                Err(_e) => {
                     // There COULD be bytes in our buffer
                     eof_stderr = true;
                 }
